@@ -101,6 +101,27 @@ void Logging::printFormat(const char format, va_list *args) {
     return;
   }
 
+  // Print char array
+  if( format == 'S' ) {
+    register char *s = (char *)va_arg( *args, int );
+    while (*s != '\0'){
+        _logOutput->print(*s++);
+        _logOutput->print(" ");
+    }
+    return;
+  }
+
+  // Print char array in hex format
+  if( format == 'y' ) {
+    register char *s = (char *)va_arg( *args, int );
+    while (*s != '\0'){
+        _logOutput->print("0x");
+        _logOutput->print(*s++, HEX);
+        _logOutput->print(" ");
+    }
+    return;
+  }
+
   if( format == 'b' ) {
     _logOutput->print(va_arg( *args, int ),BIN);
     return;
