@@ -116,6 +116,7 @@ void NRFClient::decrypt_pkg(package &pkg){
 }
 
 void NRFClient::change_key(const uint8_t *new_key){
+    _log.trace("Changing key..."CR);
     memcpy(_key, new_key, KEY_SIZE);
      _log.notice("NRFClient: New key %y"CR, _key);
 }
