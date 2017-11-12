@@ -1,180 +1,148 @@
 #include "eeprom_cli.h"
-#include <EEPROM.h>
 
 
-EepromCli::EepromCli(Logging &log)
-    : _eeprom()
+EepromCli::EepromCli(Logging &log, uint8 scl, uint8 sda)
+    : _eeprom(scl, sda, SOFT_STANDARD)
     , _log(log)
 {
-    _eeprom.init();
     _log = log;
+    _eeprom.begin();
 
 }
 
-uint16_t EepromCli::_read_struct(void)
+void EepromCli::_set_addr(uint16_t address)
 {
-    uint16_t status;
-    uint16_t *ptr = (uint16_t *)&_conf;
-    for (uint16_t i=0; i<sizeof(_conf); i++)
-    {
-        status = _eeprom.read(STRUCT_START_ADDR + i, ptr+i);
-        if (status == EEPROM_BAD_ADDRESS || status == EEPROM_NO_VALID_PAGE){
-            _log.error("Failed to read data: %X"CR, status);
-            return 1;
-        }
+    _eeprom.write((uint8_t)(address >> 8));
+    delay(10);
+    _eeprom.write((uint8_t)(address & 0b0000000011111111));
+    delay(10);
+}
+
+uint8_t EepromCli::read_byte(uint16_t addr, uint8_t *dest)
+{
+    uint8_t error;
+    byte data;
+
+    _eeprom.beginTransmission(EEPROM_ADDR);
+    _set_addr(addr);
+    error = _eeprom.endTransmission();
+    delay(10);
+    if (error != 0){
+        _log.error("EEPROM_CLI: Failed to read byte! Addr: %X. Retcode: %X"CR, addr, error);
+        return error;
     }
-    
-    return 0;
-}
-
-uint16_t EepromCli::_write_struct(void)
-{
-    uint16_t status;
-    uint16_t *ptr = (uint16_t *)&_conf;
-
-    _log.trace("Format flash"CR);
-    _eeprom.format();
-
-    for (uint16_t i=0; i<sizeof(_conf); i++)
-    {
-        status = _eeprom.write(STRUCT_START_ADDR + i, *(ptr+i));
-        if (status != EEPROM_SAME_VALUE && status != FLASH_COMPLETE && status != 0) {
-            _log.error("Failed to write data: %X"CR, status);
-            return 1;
-        }
+    _eeprom.requestFrom(EEPROM_ADDR, 1);
+    delay(10);
+    if (_eeprom.available()){
+        data = _eeprom.read();
+        _log.trace("READ: addr: %X, data: %X"CR, addr, data);
+        *dest = data;
     }
-    
-    return 0;
-}
-
-void EepromCli::init(void)
-{
-    _log.trace("Initialize flash..."CR);
-    uint16_t status = _read_struct();
-    if (status == EEPROM_BAD_ADDRESS || status == EEPROM_NO_VALID_PAGE || _conf.first_run_flag != FIRST_RUN_VAL){
-        _log.trace("Format flash"CR);
-        _eeprom.format();
-        _conf.first_run_flag = FIRST_RUN_VAL;
-        status = _write_struct();
-        if (status != 0) _log.error("Failed to save first run flag!"CR); 
-    }
-    _log.trace("Ok"CR);
-}
-
-void EepromCli::print_conf(void)
-{
-    _log.notice("FLASH START ADDR: %X"CR, EEPROM_START_ADDRESS);
-    _log.notice("FLASH PAGE0 ADDR: %X"CR, EEPROM_PAGE0_BASE);
-    _log.notice("FLASH PAGE1 ADDR: %X"CR, EEPROM_PAGE1_BASE);
-    _log.notice("FLASH PAGE SIZE: %X"CR, EEPROM_PAGE_SIZE);
-}
-
-uint16_t EepromCli::is_key_saved(bool *result)
-{
-    uint16_t status;
-    uint16_t data;
-
-    _log.trace("Check if key saved..."CR);
-    status = _read_struct();
-    if (status != 0){
-        _log.error("Is key saved. Failed to read struct!"CR);
+    else{
+        _log.error("Wire is unavailable!"CR);
         return 1;
     }
+    return 0;
+}
 
-    if (_conf.key_saved_flag != KEY_SAVED_FLAG_VAL) *result = false;
+uint8_t EepromCli::write_byte(uint16_t addr, uint8_t data)
+{
+    uint8_t error;
+
+    _eeprom.beginTransmission(EEPROM_ADDR);
+    _set_addr(addr);
+    _log.trace("WRITE: addr: %X, data: %X"CR, addr, data);
+    _eeprom.write(data);
+    delay(10);
+    error = _eeprom.endTransmission();
+    delay(10);
+    if (error != 0){
+        _log.error("EEPROM_CLI: Failed to write byte! Addr: %X. Retcode: %X"CR, addr, error);
+        return error;
+    }
+    return 0;
+}
+
+uint8_t EepromCli::read_key(uint8_t *key)
+{
+    uint8_t error;
+    uint16_t addr;
+
+    _log.notice("EEPROM_CLI: Read key...");
+    for (uint16_t i=0; i<KEY_SIZE; i++){
+        addr = KEY_ADDR + i;
+        error = read_byte(addr, key+i);
+        if (error != 0){
+            _log.error(" Failed"CR);
+            return 1;
+        } 
+    }
+    _log.notice(" Ok"CR);
+    
+    return 0;
+}
+
+uint8_t EepromCli::write_key(uint8_t *key)
+{
+    uint8_t error;
+    uint16_t addr;
+
+    _log.notice("EEPROM_CLI: Write key...");
+    for (uint16_t i=0; i<KEY_SIZE; i++){
+        addr = KEY_ADDR + i;
+        error = write_byte(addr, *(key + i));
+        if (error != 0){
+            _log.error(" Failed"CR);
+            return 1;
+        } 
+    }
+    _log.notice(" Ok"CR);
+    
+    return 0;
+}
+
+uint8_t EepromCli::is_key_saved(bool *result)
+{
+    uint8_t error;
+    uint8_t res;
+
+    _log.notice("EEPROM_CLI: Is key saved...");
+    error = read_byte(KEY_SAVED_FLAF_ADDR, &res);
+    if (error != 0){
+        _log.error(" Failed"CR);
+        return 1;
+    } 
+    _log.notice(" Ok"CR);
+    
+    if (res != KEY_SAVED_FLAG_VAL) *result = false;
     else *result = true;
-    _log.trace("Ok"CR);
     return 0;
 }
 
-uint16_t EepromCli::set_key_saved(void)
+uint8_t EepromCli::set_key_saved(void)
 {
-    uint16_t status;
+    uint8_t error;
 
-    _log.trace("Set key saved..."CR);
-    status = _read_struct();
-    if (status != 0){
-        _log.error("Set key saved. Failed to read struct!"CR);
+    _log.notice("EEPROM_CLI: Set key saved...");
+    error = write_byte(KEY_SAVED_FLAF_ADDR, KEY_SAVED_FLAG_VAL);
+    if (error != 0){
+        _log.error(" Failed"CR);
         return 1;
-    }
-
-    _conf.key_saved_flag = KEY_SAVED_FLAG_VAL;
-
-    status = _write_struct();
-    if (status !=0){
-        _log.error("Set key saved. Failed to write struct!"CR);
-        return 1;
-    }
-    _log.trace("Ok"CR);
+    } 
+    _log.notice(" Ok"CR);
     return 0;
 }
 
-uint16_t EepromCli::set_key_unsaved(void)
+uint8_t EepromCli::set_key_unsaved(void)
 {
-    uint16_t status;
+    uint8_t error;
 
-    _log.trace("Set key unsaved..."CR);
-    status = _read_struct();
-    if (status != 0){
-        _log.error("Set key unsaved. Failed to read struct!"CR);
+    _log.notice("EEPROM_CLI: Set key unsaved...");
+    error = write_byte(KEY_SAVED_FLAF_ADDR, 0xFF);
+    if (error != 0){
+        _log.error(" Failed"CR);
         return 1;
-    }
-
-    _conf.key_saved_flag = 0xffff;
-
-    status = _write_struct();
-    if (status !=0){
-        _log.error("Set key unsaved. Failed to save struct!"CR);
-        return 1;
-    }
-    _log.trace("Ok"CR);
-    return 0;
-}
-
-uint16_t EepromCli::init_key(unsigned char *key, unsigned int keysize)
-{
-    uint16_t status;
-
-    _log.trace("Read key..."CR);
-    status = _read_struct();
-    if (status != 0){
-        _log.error("Init key. Failed to read struct!"CR);
-        return 1;
-    }
-    if (_conf.key_saved_flag == KEY_SAVED_FLAG_VAL){
-        _log.notice("Initialize key from FLASH..."CR);
-        memcpy(key, _conf.key, KEY_SIZE);
-        _log.trace("Ok"CR);
-        return 0;
-    }
-    _log.trace("Key absent in flash"CR);
-    return 2;
-}
-
-uint16_t EepromCli::save_key(unsigned char *key, unsigned int keysize)
-{
-    uint16_t status;
-
-    _log.trace("Save key..."CR);
-    status = _read_struct();
-    if (status != 0){
-        _log.error("Save key. Failed to read struct!"CR);
-        return 1;
-    }
-
-    memcpy(_conf.key, key, KEY_SIZE);
-    status = _write_struct();
-    if (status !=0){
-        _log.error("Save key. Failed to save struct!"CR);
-        return 1;
-    }
-    _conf.key_saved_flag = KEY_SAVED_FLAG_VAL;
-    status = _write_struct();
-    if (status !=0){
-        _log.error("Save key. Save flag. Failed to save struct!"CR);
-        return 1;
-    }
-    _log.trace("Ok"CR);
-    return 0;
+    } 
+    _log.notice(" Ok"CR);
 }
 

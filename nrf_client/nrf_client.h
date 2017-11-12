@@ -16,6 +16,9 @@ const uint8_t def_key[KEY_SIZE] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x0
                                    0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
                                    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
                                    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F};
+typedef struct Package {                  // Structure of our payload
+    unsigned char data[DATA_SIZE];
+};
 
 typedef void (*printer)(const char *text);
 
@@ -26,20 +29,10 @@ class NRFClient
         void initialise(void);
         void init_tx(void);
         void init_rx(void);
-        struct package {                  // Structure of our payload
-          //unsigned long node;
-          //unsigned long counter;
-          unsigned char data[DATA_SIZE];
-        };
-        bool send_pkg(package &pkg);
-        bool receive_pkg(package &pkg, unsigned long timeout);
-        bool send(package &pkg, bool encrypted = true);
-        bool receive(package &pkg, unsigned int timeout, bool decrypted = true);
-        void encrypt_pkg(package &pkg);
-        void decrypt_pkg(package &pkg);
         void change_key(const uint8_t *new_key);
-        bool send_data(package &pkg, unsigned char *data, unsigned int size);
-        bool receive_data(package &pkg, unsigned char *expected_data, unsigned int size, unsigned long timeout);
+        bool send(unsigned char *data, unsigned int size, bool decrypted = true);
+        bool receive(unsigned char *receive_data, unsigned int timeout, bool decrypted = true);
+        bool receive_expected(unsigned char *expected_data, unsigned int size, unsigned long timeout, bool decrypted = true);
 
     private:
         int _ce;
@@ -47,7 +40,11 @@ class NRFClient
         Logging& _log;
         RF24 _radio;
         AES256 _cipher;
+        Package _package;
         uint8_t _key[KEY_SIZE];
+
+        void _encrypt_pkg();
+        void _decrypt_pkg();
         bool _is_same(unsigned char *arr1, unsigned char *arr2, unsigned int len);
 };
 

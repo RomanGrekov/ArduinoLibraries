@@ -34,46 +34,40 @@ void NRFClient::init_rx(void)
     _radio.openReadingPipe(1,pipes[0]);
 }
 
-bool NRFClient::send_data(package &pkg, unsigned char *data, unsigned int size){
-    memcpy(pkg.data, data, size);
-    return send(pkg);
-}
-
-bool NRFClient::send(package &pkg, bool encrypted){
-    if (encrypted)  encrypt_pkg(pkg);
-    return send_pkg(pkg);
-}
-
-bool NRFClient::receive_data(package &pkg, unsigned char *expected_data, unsigned int size, unsigned long timeout){
-    bool res = receive(pkg, timeout);
-    if (res != true) return false;
-    return _is_same(pkg.data, expected_data, size);
-}
 
 bool NRFClient::_is_same(unsigned char *arr1, unsigned char *arr2, unsigned int len){
     for (unsigned int i=0; i < len; i++){
-        if (arr1[i] != arr2[i]) return false;
+        if (arr1[i] != arr2[i]){
+            _log.error("Expected data different!"CR);
+            return false;
+        }
     }
     return true;
 }
 
-bool NRFClient::receive(package &pkg, unsigned int timeout, bool decrypted){
-    bool res = receive_pkg(pkg, timeout);
-    if (decrypted)  decrypt_pkg(pkg);
-    return res;
-}
-
-bool NRFClient::send_pkg(package &pkg){
+bool NRFClient::send(unsigned char *data, unsigned int size, bool encrypted){
     bool res;
+    memcpy(_package.data, data, size);
+
+    if (encrypted)  _encrypt_pkg();
+
     _radio.stopListening();
-    res = _radio.write(&pkg, sizeof(pkg) );
+    delay(10);
+    res = _radio.write(&_package, sizeof(_package) );
     if (! res) _log.error("NRFClient: Failed to send package"CR);
     return res;
 }
 
-bool NRFClient::receive_pkg(package &pkg, unsigned long timeout){ // If timeout = 0 then infinity
+bool NRFClient::receive_expected(unsigned char *expected_data, unsigned int size, unsigned long timeout, bool decrypted){
+    unsigned char data[DATA_SIZE];
+    bool res = receive(data, timeout);
+    if (res != true) return false;
+    return _is_same(data, expected_data, size);
+}
+
+bool NRFClient::receive(unsigned char *receive_data, unsigned int timeout, bool decrypted){
     _radio.startListening();
-    //delay(10);
+    delay(10);
 
     if (timeout != 0){
         // Wait here until we get a response, or timeout (250ms)
@@ -93,26 +87,29 @@ bool NRFClient::receive_pkg(package &pkg, unsigned long timeout){ // If timeout 
         while( ! _radio.available() );
     }
     _log.trace("NRFClient: Reading data..."CR);
-    _radio.read(&pkg, sizeof(pkg) );
+    _radio.read(&_package, sizeof(_package) );
+
+    if (decrypted)  _decrypt_pkg();
+    memcpy(receive_data, _package.data, DATA_SIZE);
     return true;
 }
 
-void NRFClient::encrypt_pkg(package &pkg){
-    _log.trace("NRFClient: Raw data: %y"CR, pkg.data);
+void NRFClient::_encrypt_pkg(){
+    _log.trace("NRFClient: Raw data: %y"CR, _package.data);
     unsigned char buffer[DATA_SIZE];
-    memcpy(buffer, pkg.data, DATA_SIZE);
+    memcpy(buffer, _package.data, DATA_SIZE);
     _cipher.setKey(_key, _cipher.keySize());
-    _cipher.encryptBlock(pkg.data, buffer);
-    _log.trace("NRFClient: Encrypted data: %y"CR, pkg.data);
+    _cipher.encryptBlock(_package.data, buffer);
+    _log.trace("NRFClient: Encrypted data: %y"CR, _package.data);
 }
 
-void NRFClient::decrypt_pkg(package &pkg){
-    _log.trace("NRFClient: Raw data: %y"CR, pkg.data);
+void NRFClient::_decrypt_pkg(){
+    _log.trace("NRFClient: Raw data: %y"CR, _package.data);
     unsigned char buffer[DATA_SIZE];
-    memcpy(buffer, pkg.data, DATA_SIZE);
+    memcpy(buffer, _package.data, DATA_SIZE);
     _cipher.setKey(_key, _cipher.keySize());
-    _cipher.decryptBlock(pkg.data, buffer);
-    _log.trace("NRFClient: Decrypted data: %y"CR, pkg.data);
+    _cipher.decryptBlock(_package.data, buffer);
+    _log.trace("NRFClient: Decrypted data: %y"CR, _package.data);
 }
 
 void NRFClient::change_key(const uint8_t *new_key){
